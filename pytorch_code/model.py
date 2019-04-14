@@ -18,7 +18,7 @@ import torch.nn.functional as F
 class GNN(Module):
     def __init__(self, hidden_size, step=1):  #输入仅需确定隐状态数和步数
         super(GNN, self).__init__()
-        self.step = step
+        self.step = step  #gnn前向传播的步数 default=1
         self.hidden_size = hidden_size
         self.input_size = hidden_size * 2
         self.gate_size = 3 * hidden_size
@@ -57,18 +57,19 @@ class GNN(Module):
         hy = newgate + inputgate * (hidden - newgate)
         return hy
 
-    def forward(self, A, hidden):
-        for i in range(self.step):
+    def forward(self, A, hidden): 
+        #A-->实际上是该批数据图矩阵的列表  hidden-->（100-batch_size,5-?,100-embeding_size）
+        for i in range(self.step):  
             hidden = self.GNNCell(A, hidden)
         return hidden
 
 
 class SessionGraph(Module):
-    def __init__(self, opt, n_node): #这里仅需要给定选项和图的节点数目
+    def __init__(self, opt, n_node): #opt-->可控输入参数, n_node-->嵌入层图的节点数目
         super(SessionGraph, self).__init__()
         self.hidden_size = opt.hiddenSize  #opt.hiddenSize-->hidden state size
         self.n_node = n_node
-        self.batch_size = opt.batchSize   #opt.batch_siza-->input batch size
+        self.batch_size = opt.batchSize   #opt.batch_siza-->input batch size *default=100
         self.nonhybrid = opt.nonhybrid   #opt.nonhybrid-->only use the global preference to predicts
         self.embedding = nn.Embedding(self.n_node, self.hidden_size)
         self.gnn = GNN(self.hidden_size, step=opt.step) #opt.step-->gnn propogation steps
@@ -100,8 +101,10 @@ class SessionGraph(Module):
         scores = torch.matmul(a, b.transpose(1, 0))
         return scores
 
-    def forward(self, inputs, A):
-        hidden = self.embedding(inputs)
+    def forward(self, inputs, A):  
+        #inputs-->单个点击动作序列的唯一类别并按照批最大唯一类别长度补全0列表(即图矩阵的元素的类别标签列表)  A-->实际上是该批数据图矩阵的列表
+#        print(inputs.size())  #测试打印下输入的维度  （100-batch_size,5-?） 5-?代表这个维的长度是该批唯一最大类别长度，根据不同批会变化
+        hidden = self.embedding(inputs) #（100-batch_size,5-?,100-embeding_size）
         hidden = self.gnn(A, hidden)
         return hidden
 
@@ -120,19 +123,20 @@ def trans_to_cpu(variable):
         return variable
 
 
-def forward(model, i, data):  #传入模型model, 数据批的索引i, 训练的数据data
-    alias_inputs, A, items, mask, targets = data.get_slice(i)
+def forward(model, i, data):  #传入模型model(SessionGraph), 数据批的索引i, 训练的数据data(Data)
+    #返回：动作序列对应唯一动作集合的位置，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
+    alias_inputs, A, items, mask, targets = data.get_slice(i)  
     alias_inputs = trans_to_cuda(torch.Tensor(alias_inputs).long())
     items = trans_to_cuda(torch.Tensor(items).long())
     A = trans_to_cuda(torch.Tensor(A).float())
     mask = trans_to_cuda(torch.Tensor(mask).long())
-    hidden = model(items, A)
+    hidden = model(items, A)  #这里调用了SessionGraph的forward函数
     get = lambda i: hidden[i][alias_inputs[i]]
     seq_hidden = torch.stack([get(i) for i in torch.arange(len(alias_inputs)).long()])
     return targets, model.compute_scores(seq_hidden, mask)
 
 
-def train_test(model, train_data, test_data):
+def train_test(model, train_data, test_data): #传入模型SessionGraph，训练数据和测试数据Data
     model.scheduler.step()  #调度设置优化器的参数
     print('start training: ', datetime.datetime.now())
     model.train()  # 指定模型为训练模式，计算梯度
@@ -140,7 +144,7 @@ def train_test(model, train_data, test_data):
     slices = train_data.generate_batch(model.batch_size)
     for i, j in zip(slices, np.arange(len(slices))):   #根据批的索引数据进行数据提取训练:i-->批索引, j-->第几批
         model.optimizer.zero_grad()  #前一步的损失清零
-        targets, scores = forward(model, i, train_data)
+        targets, scores = forward(model, i, train_data) #
         targets = trans_to_cuda(torch.Tensor(targets).long())
         loss = model.loss_function(scores, targets - 1)
         loss.backward() # 反向传播

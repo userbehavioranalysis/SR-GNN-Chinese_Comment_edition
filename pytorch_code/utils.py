@@ -54,7 +54,7 @@ def split_validation(train_set, valid_portion):
 class Data():
     def __init__(self, data, shuffle=False, graph=None):
         inputs = data[0]   #输入序列的列表
-        inputs, mask, len_max = data_masks(inputs, [0])  #详见函数 ---> data_masks()
+        inputs, mask, len_max = data_masks(inputs, [0])  #详见函数 ---> data_masks() 这个函数使得所有会话按照最长的长度补0了！
         self.inputs = np.asarray(inputs)  #补全0后的输入序列，并转化成array()
         self.mask = np.asarray(mask)     #面罩序列，并转化成array()
         self.len_max = len_max    #最大序列长度
@@ -82,25 +82,26 @@ class Data():
         items, n_node, A, alias_inputs = [], [], [], []
         for u_input in inputs:
             n_node.append(len(np.unique(u_input)))  #n_node存储每个输入序列单独出现的点击动作类别的个数的列表
-        max_n_node = np.max(n_node)   #得到最大动作类别的数目
-        for u_input in inputs: 
-            node = np.unique(u_input)
+        max_n_node = np.max(n_node)   #得到批最长唯一动作会话序列的长度
+        for u_input in inputs:  # u_input 为一个会话序列
+            node = np.unique(u_input)  #该循环的会话的唯一动作序列
             items.append(node.tolist() + (max_n_node - len(node)) * [0])  #单个点击动作序列的唯一类别并按照批最大类别补全0
-            u_A = np.zeros((max_n_node, max_n_node))  #存储最大动作矩阵的二维向量
-            for i in np.arange(len(u_input) - 1):
-                if u_input[i + 1] == 0:
+            u_A = np.zeros((max_n_node, max_n_node))  #存储行为矩阵的二维向量(方阵)，长度是最大唯一动作的数量
+            for i in np.arange(len(u_input) - 1):  #循环该序列的长度
+                if u_input[i + 1] == 0:  #循环到i的下一个动作时“0”动作时退出循环，因为0代表序列已经结束，后面都是补的动作0
                     break
-                u = np.where(node == u_input[i])[0][0]
-                v = np.where(node == u_input[i + 1])[0][0]
-                u_A[u][v] = 1
-            u_sum_in = np.sum(u_A, 0)
+                u = np.where(node == u_input[i])[0][0]  #该动作对应唯一动作集合的序号
+                v = np.where(node == u_input[i + 1])[0][0] #下一个动作对应唯一动作集合的序号
+                u_A[u][v] = 1  #前一个动作u_input[i]转移到后一个动作u_input[i + 1]的次数变成1
+            u_sum_in = np.sum(u_A, 0) #矩阵列求和，最后变成一行
             u_sum_in[np.where(u_sum_in == 0)] = 1
             u_A_in = np.divide(u_A, u_sum_in)
-            u_sum_out = np.sum(u_A, 1)
+            u_sum_out = np.sum(u_A, 1) #矩阵行求和，最后变成一列
             u_sum_out[np.where(u_sum_out == 0)] = 1
             u_A_out = np.divide(u_A.transpose(), u_sum_out)
-            u_A = np.concatenate([u_A_in, u_A_out]).transpose()
-            A.append(u_A)
-            alias_inputs.append([np.where(node == i)[0][0] for i in u_input])
+            u_A = np.concatenate([u_A_in, u_A_out]).transpose()  #得到一个会话的连接矩阵
+            A.append(u_A)  #存储该批数据图矩阵的列表，u_A方阵的长度相同——为该批最长唯一动作会话序列的长度
+            alias_inputs.append([np.where(node == i)[0][0] for i in u_input]) #动作序列对应唯一动作集合的位置
         return alias_inputs, A, items, mask, targets
+        #返回：动作序列对应唯一动作集合的位置，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
     

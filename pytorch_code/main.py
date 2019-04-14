@@ -50,7 +50,8 @@ def main():
         n_node = 310
 
     model = trans_to_cuda(SessionGraph(opt, n_node))  #模型构建就靠这句话
-
+#    print(SessionGraph(opt, n_node))  #测试打印下网络结构
+    
     start = time.time()
     best_result = [0, 0]
     best_epoch = [0, 0]

@@ -29,7 +29,8 @@ parser.add_argument('--valid_portion', type=float, default=0.1, help='split the 
 opt = parser.parse_args()
 print(opt)
 
-test = SessionGraph(opt, 310)
+#test = SessionGraph(opt, 310)
+#print(test)  #打印图神经网络的结构
 
 #测试显示会话图
 #model = trans_to_cuda(SessionGraph(opt, 310))  #模型构建就靠这句话
@@ -43,7 +44,7 @@ test = SessionGraph(opt, 310)
 train_data = pickle.load(open('../datasets/' + opt.dataset + '/train.txt', 'rb'))
 train_data_compare = Data(train_data, shuffle=True)
 slices = train_data_compare.generate_batch(100)
-
+slicesData = train_data_compare.get_slice(slices[1])
 
 
 
