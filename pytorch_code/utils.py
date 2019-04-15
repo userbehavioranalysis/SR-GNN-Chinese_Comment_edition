@@ -101,7 +101,7 @@ class Data():
             u_A_out = np.divide(u_A.transpose(), u_sum_out)
             u_A = np.concatenate([u_A_in, u_A_out]).transpose()  #得到一个会话的连接矩阵
             A.append(u_A)  #存储该批数据图矩阵的列表，u_A方阵的长度相同——为该批最长唯一动作会话序列的长度
-            alias_inputs.append([np.where(node == i)[0][0] for i in u_input]) #动作序列对应唯一动作集合的位置
+            alias_inputs.append([np.where(node == i)[0][0] for i in u_input]) #动作序列对应唯一动作集合的位置角标
         return alias_inputs, A, items, mask, targets
-        #返回：动作序列对应唯一动作集合的位置，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
+        #返回：动作序列对应唯一动作集合的位置角标，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
     

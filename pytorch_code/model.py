@@ -39,26 +39,30 @@ class GNN(Module):
         self.linear_edge_f = nn.Linear(self.hidden_size, self.hidden_size, bias=True)
 
     def GNNCell(self, A, hidden):
-        #有关matmul的解释：矩阵相乘，多维会广播相乘
-        input_in = torch.matmul(A[:, :, :A.shape[1]], self.linear_edge_in(hidden)) + self.b_iah
-        input_out = torch.matmul(A[:, :, A.shape[1]: 2 * A.shape[1]], self.linear_edge_out(hidden)) + self.b_oah
+        #A-->实际上是该批数据图矩阵的列表  eg:(100,5?,10?(即5?X2))
+        #hidden--> eg(100-batch_size,5?,100-embeding_size) 
+        #后面所有的5?代表这个维的长度是该批唯一最大类别长度(类别数目不足该长度的会话补零)，根据不同批会变化
+        #有关matmul的解释：矩阵相乘，多维会广播相乘  
+        input_in = torch.matmul(A[:, :, :A.shape[1]], self.linear_edge_in(hidden)) + self.b_iah   #input_in-->(100,5?,100)
+        input_out = torch.matmul(A[:, :, A.shape[1]: 2 * A.shape[1]], self.linear_edge_out(hidden)) + self.b_oah  #input_out-->(100,5?,100)
         #在第2个轴将tensor连接起来
-        inputs = torch.cat([input_in, input_out], 2)
+        inputs = torch.cat([input_in, input_out], 2)  #inputs-->(100,5?,200)
         #关于functional.linear(input, weight, bias=None)的解释：y= xA^T + b 应用线性变换，返回Output: (N,∗,out_features)
         #[*代表任意其他的东西]
-        gi = F.linear(inputs, self.w_ih, self.b_ih)
-        gh = F.linear(hidden, self.w_hh, self.b_hh)
+        gi = F.linear(inputs, self.w_ih, self.b_ih) #gi-->(100,5?,300)
+        gh = F.linear(hidden, self.w_hh, self.b_hh) #gh-->(100,5?,300)
         #torch.chunk(tensor, chunks, dim=0)：将tensor拆分成指定数量的块，比如下面就是沿着第2个轴拆分成3块
-        i_r, i_i, i_n = gi.chunk(3, 2)
-        h_r, h_i, h_n = gh.chunk(3, 2)
-        resetgate = torch.sigmoid(i_r + h_r)
-        inputgate = torch.sigmoid(i_i + h_i)
-        newgate = torch.tanh(i_n + resetgate * h_n)
-        hy = newgate + inputgate * (hidden - newgate)
+        i_r, i_i, i_n = gi.chunk(3, 2)  #三个都是(100,5?,100)
+        h_r, h_i, h_n = gh.chunk(3, 2)  #三个都是(100,5?,100)
+        resetgate = torch.sigmoid(i_r + h_r)   #resetgate-->(100,5?,100)      原文公式(3)
+        inputgate = torch.sigmoid(i_i + h_i)   #inputgate-->(100,5?,100)
+        newgate = torch.tanh(i_n + resetgate * h_n)  #newgate-->(100,5?,100)  原文公式(4)
+        hy = newgate + inputgate * (hidden - newgate)   #hy-->(100,5?,100)    原文公式(5)
         return hy
 
     def forward(self, A, hidden): 
-        #A-->实际上是该批数据图矩阵的列表  hidden-->（100-batch_size,5-?,100-embeding_size）
+        #A-->实际上是该批数据图矩阵的列表 eg:(100,5?,10?(即5?X2)) 5?代表这个维的长度是该批唯一最大类别长度(类别数目不足该长度的会话补零)，根据不同批会变化
+        #hidden--> eg:(100-batch_size,5?,100-embeding_size) 即数据图中节点类别对应低维嵌入的表示
         for i in range(self.step):  
             hidden = self.GNNCell(A, hidden)
         return hidden
@@ -90,23 +94,25 @@ class SessionGraph(Module):
             weight.data.uniform_(-stdv, stdv)
 
     def compute_scores(self, hidden, mask):
-        ht = hidden[torch.arange(mask.shape[0]).long(), torch.sum(mask, 1) - 1]  # batch_size x latent_size
-        q1 = self.linear_one(ht).view(ht.shape[0], 1, ht.shape[1])  # batch_size x 1 x latent_size
-        q2 = self.linear_two(hidden)  # batch_size x seq_length x latent_size
-        alpha = self.linear_three(torch.sigmoid(q1 + q2))
-        a = torch.sum(alpha * hidden * mask.view(mask.shape[0], -1, 1).float(), 1)
+        #hidden-->(100,16?,100) 其中16?代表该样本所有数据最长会话的长度(不同数据集会不同)，单个样本其余部分补了0
+        #mask-->(100,16?) 有序列的位置是[1],没有动作序列的位置是[0]
+        ht = hidden[torch.arange(mask.shape[0]).long(), torch.sum(mask, 1) - 1]  # batch_size x latent_size(100,100) 这是最后一个动作对应的位置，即文章中说的局部偏好
+        q1 = self.linear_one(ht).view(ht.shape[0], 1, ht.shape[1])  # batch_size x 1 x latent_size(100,1,100) 局部偏好线性变换后改成能计算的维度
+        q2 = self.linear_two(hidden)  # batch_size x seq_length x latent_size (100,16?,100) 即全局偏好
+        alpha = self.linear_three(torch.sigmoid(q1 + q2))  #(100,16,1)
+        a = torch.sum(alpha * hidden * mask.view(mask.shape[0], -1, 1).float(), 1) #(100,100)  原文中公式(6)
         if not self.nonhybrid:
-            a = self.linear_transform(torch.cat([a, ht], 1))
-        b = self.embedding.weight[1:]  # n_nodes x latent_size
-        scores = torch.matmul(a, b.transpose(1, 0))
-        return scores
+            a = self.linear_transform(torch.cat([a, ht], 1))  #原文中公式(7)
+        b = self.embedding.weight[1:]  # n_nodes x latent_size  (309,100)
+        scores = torch.matmul(a, b.transpose(1, 0))   #原文中公式(8)
+        return scores  #(100,309)
 
     def forward(self, inputs, A):  
         #inputs-->单个点击动作序列的唯一类别并按照批最大唯一类别长度补全0列表(即图矩阵的元素的类别标签列表)  A-->实际上是该批数据图矩阵的列表
-#        print(inputs.size())  #测试打印下输入的维度  （100-batch_size,5-?） 5-?代表这个维的长度是该批唯一最大类别长度，根据不同批会变化
-        hidden = self.embedding(inputs) #（100-batch_size,5-?,100-embeding_size）
+#        print(inputs.size())  #测试打印下输入的维度  （100-batch_size,5?） 5?代表这个维的长度是该批唯一最大类别长度(类别数目不足该长度的会话补0)，根据不同批会变化
+        hidden = self.embedding(inputs) #返回的hidden的shape -->（100-batch_size,5?,100-embeding_size）
         hidden = self.gnn(A, hidden)
-        return hidden
+        return hidden  #(100,5?,100)
 
 
 def trans_to_cuda(variable):
@@ -124,15 +130,18 @@ def trans_to_cpu(variable):
 
 
 def forward(model, i, data):  #传入模型model(SessionGraph), 数据批的索引i, 训练的数据data(Data)
-    #返回：动作序列对应唯一动作集合的位置，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
+    #返回：动作序列对应唯一动作集合的位置角标，该批数据图矩阵的列表，单个点击动作序列的唯一类别并按照批最大类别补全0列表，面罩，目标数据
     alias_inputs, A, items, mask, targets = data.get_slice(i)  
-    alias_inputs = trans_to_cuda(torch.Tensor(alias_inputs).long())
+    alias_inputs = trans_to_cuda(torch.Tensor(alias_inputs).long())  #(100,16?)
+    test_alias_inputs = alias_inputs.numpy()  #测试查看alias_inputs的内容
+    strange = torch.arange(len(alias_inputs)).long() #0到99
     items = trans_to_cuda(torch.Tensor(items).long())
     A = trans_to_cuda(torch.Tensor(A).float())
     mask = trans_to_cuda(torch.Tensor(mask).long())
-    hidden = model(items, A)  #这里调用了SessionGraph的forward函数
-    get = lambda i: hidden[i][alias_inputs[i]]
-    seq_hidden = torch.stack([get(i) for i in torch.arange(len(alias_inputs)).long()])
+    hidden = model(items, A)  #这里调用了SessionGraph的forward函数,返回维度数目(100,5?,100)
+    get = lambda i: hidden[i][alias_inputs[i]]   #选择第这一批第i个样本对应类别序列的函数
+    test_get = get(0)  # (16?,100)
+    seq_hidden = torch.stack([get(i) for i in torch.arange(len(alias_inputs)).long()])  #(100,16?,100)
     return targets, model.compute_scores(seq_hidden, mask)
 
 
