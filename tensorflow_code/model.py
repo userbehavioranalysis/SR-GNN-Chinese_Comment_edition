@@ -4,22 +4,34 @@
 # @Author : {ZM7}
 # @File : model.py
 # @Software: PyCharm
+# 导入 TensorFlow 和 math 库
 import tensorflow as tf
 import math
 
-
+# 定义一个模型类 Model
 class Model(object):
+    
+    # 初始化模型的参数
     def __init__(self, hidden_size=100, out_size=100, batch_size=100, nonhybrid=True):
+        
+        # 隐藏层的大小、输出的大小、批次的大小
         self.hidden_size = hidden_size
         self.out_size = out_size
         self.batch_size = batch_size
-        self.mask = tf.placeholder(dtype=tf.float32)
-        self.alias = tf.placeholder(dtype=tf.int32)  # 给给每个输入重新
-        self.item = tf.placeholder(dtype=tf.int32)   # 重新编号的序列构成的矩阵
-        self.tar = tf.placeholder(dtype=tf.int32)
+        
+        # 占位符
+        self.mask = tf.placeholder(dtype=tf.float32)      # 掩码矩阵
+        self.alias = tf.placeholder(dtype=tf.int32)       # 给每个输入重新编号的序列构成的矩阵
+        self.item = tf.placeholder(dtype=tf.int32)        # 序列构成的矩阵
+        self.tar = tf.placeholder(dtype=tf.int32)         # 目标序列
+        
+        # 是否使用非混合模式
         self.nonhybrid = nonhybrid
+        
+        # 标准差
         self.stdv = 1.0 / math.sqrt(self.hidden_size)
-
+        
+        # 定义 NASR 模型参数
         self.nasr_w1 = tf.get_variable('nasr_w1', [self.out_size, self.out_size], dtype=tf.float32,
                                        initializer=tf.random_uniform_initializer(-self.stdv, self.stdv))
         self.nasr_w2 = tf.get_variable('nasr_w2', [self.out_size, self.out_size], dtype=tf.float32,
@@ -28,6 +40,7 @@ class Model(object):
                                       initializer=tf.random_uniform_initializer(-self.stdv, self.stdv))
         self.nasr_b = tf.get_variable('nasr_b', [self.out_size], dtype=tf.float32, initializer=tf.zeros_initializer())
 
+    # 前向传播过程
     def forward(self, re_embedding, train=True):
         rm = tf.reduce_sum(self.mask, 1)
         last_id = tf.gather_nd(self.alias, tf.stack([tf.range(self.batch_size), tf.to_int32(rm)-1], axis=1))
