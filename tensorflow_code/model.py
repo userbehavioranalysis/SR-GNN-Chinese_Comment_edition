@@ -42,11 +42,16 @@ class Model(object):
 
     # 前向传播过程
     def forward(self, re_embedding, train=True):
+        # 计算每个序列的有效长度
         rm = tf.reduce_sum(self.mask, 1)
+        # 获取每个序列的最后一个节点的id
         last_id = tf.gather_nd(self.alias, tf.stack([tf.range(self.batch_size), tf.to_int32(rm)-1], axis=1))
+        # 获取每个序列最后一个节点的嵌入表示
         last_h = tf.gather_nd(re_embedding, tf.stack([tf.range(self.batch_size), last_id], axis=1))
+        # 获取每个序列所有节点的嵌入表示
         seq_h = tf.stack([tf.nn.embedding_lookup(re_embedding[i], self.alias[i]) for i in range(self.batch_size)],
-                         axis=0)                                                           #batch_size*T*d
+                         axis=0)  # batch_size*T*d
+        # 计算注意力系数
         last = tf.matmul(last_h, self.nasr_w1)
         seq = tf.matmul(tf.reshape(seq_h, [-1, self.out_size]), self.nasr_w2)
         last = tf.reshape(last, [self.batch_size, 1, -1])
@@ -55,27 +60,34 @@ class Model(object):
             self.mask, [-1, 1])
         b = self.embedding[1:]
         if not self.nonhybrid:
+            # 非纯注意力模型，将注意力系数和节点嵌入表示进行拼接
             ma = tf.concat([tf.reduce_sum(tf.reshape(coef, [self.batch_size, -1, 1]) * seq_h, 1),
                             tf.reshape(last, [-1, self.out_size])], -1)
+            # 将拼接后的结果通过全连接层转换
             self.B = tf.get_variable('B', [2 * self.out_size, self.out_size],
                                      initializer=tf.random_uniform_initializer(-self.stdv, self.stdv))
             y1 = tf.matmul(ma, self.B)
+            # 计算预测结果
             logits = tf.matmul(y1, b, transpose_b=True)
         else:
+            # 纯注意力模型，只使用注意力系数来计算预测结果
             ma = tf.reduce_sum(tf.reshape(coef, [self.batch_size, -1, 1]) * seq_h, 1)
             logits = tf.matmul(ma, b, transpose_b=True)
-        loss = tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.tar - 1, logits=logits))
+        # 计算损失
+        loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.tar - 1, logits=logits))
+        # 获取所有可训练变量
         self.vars = tf.trainable_variables()
         if train:
+            # 加入L2正则化
             lossL2 = tf.add_n([tf.nn.l2_loss(v) for v in self.vars if v.name not
                                in ['bias', 'gamma', 'b', 'g', 'beta']]) * self.L2
             loss = loss + lossL2
         return loss, logits
 
     def run(self, fetches, tar, item, adj_in, adj_out, alias, mask):
-        return self.sess.run(fetches, feed_dict={self.tar: tar, self.item: item, self.adj_in: adj_in,
-                                                 self.adj_out: adj_out, self.alias: alias, self.mask: mask})
+        # 运行模型
+        return self.sess.run(fetches, feed_dict={self.tar: tar, self.item: item, self.adj
+
 
 
 class GGNN(Model):
